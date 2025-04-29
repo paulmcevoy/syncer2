@@ -32,6 +32,7 @@ OS=$(uname)
 
 # Log the start time
 echo "Sync started at $(date)" | gawk '{print strftime("[%Y-%m-%d %H:%M:%S]"), $0}' >> "$LOGFILE"
+terminal-notifier -title "Syncer" -message "Sync started!" -sound default
 
 # Cleanup function to delete .DS_Store and ._ files
 cleanup_files() {
@@ -68,16 +69,55 @@ cleanup_files "$SOURCE"
 cleanup_files "$DEST"
 
 # Start rsync
-echo "Starting rsync from $SOURCE to $DEST" | gawk '{print strftime("[%Y-%m-%d %H:%M:%S]"), $0}' >> "$LOGFILE"
-rsync -av --itemize-changes --delete --no-perms --no-owner --no-group --chmod=a=rwx \
+rsync_output=$(rsync -av --itemize-changes --delete --no-perms --no-owner --no-group --chmod=a=rwx \
     --exclude="*Lucife*" \
-    "$SOURCE/" "$DEST/" | gawk '{print strftime("[%Y-%m-%d %H:%M:%S]"), $0}' >> "$LOGFILE" 2>&1
+    "$SOURCE/" "$DEST/" 2>&1)
+
+# Count the number of files transferred, deleted, and errors
+files_transferred=$(echo "$rsync_output" | grep -c '^>f')
+files_deleted=$(echo "$rsync_output" | grep -c '^*deleting')
+rsync_errors=$(echo "$rsync_output" | grep -i -c 'rsync error')
+
+# Choose icons for each status
+icon_success="/System/Library/CoreServices/CoreTypes.bundle/Contents/Resources/ToolbarInfo.icns"
+icon_info="/System/Library/CoreServices/CoreTypes.bundle/Contents/Resources/ToolbarInfo.icns"
+icon_error="/System/Library/CoreServices/CoreTypes.bundle/Contents/Resources/AlertStopIcon.icns"
+icon_delete="/System/Library/CoreServices/CoreTypes.bundle/Contents/Resources/TrashIcon.icns"
+icon_sync="/System/Library/CoreServices/CoreTypes.bundle/Contents/Resources/GenericNetworkIcon.icns"
+
+# Set your Telegram bot token and chat ID
+TELEGRAM_BOT_TOKEN='7975126386:AAG-N0IAoNf0TsBEfd4cR2mpa9NtqqLIiUY'
+TELEGRAM_CHAT_ID='7666167008'
+
+send_telegram() {
+    local message="$1"
+    curl -s -X POST "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" \
+        -d chat_id="${TELEGRAM_CHAT_ID}" \
+        -d text="${message}" \
+        -d parse_mode="Markdown"
+}
+
+# Notify based on the result
+if [ $rsync_errors -gt 0 ]; then
+    send_telegram "❌ *Syncer*: Sync encountered errors. Check the log for details."
+elif [ $files_transferred -gt 0 ] && [ $files_deleted -gt 0 ]; then
+    send_telegram "🔄 *Syncer*: Sync complete: $files_transferred files transferred, $files_deleted files deleted."
+elif [ $files_transferred -gt 0 ]; then
+    send_telegram "✅ *Syncer*: Sync complete: $files_transferred files transferred."
+elif [ $files_deleted -gt 0 ]; then
+    send_telegram "🗑️ *Syncer*: Sync complete: $files_deleted files deleted."
+else
+    send_telegram "ℹ️ *Syncer*: Sync complete: No files transferred or deleted."
+fi
+
+# Log rsync output
+echo "$rsync_output" | gawk '{print strftime("[%Y-%m-%d %H:%M:%S]"), $0}' >> "$LOGFILE"
 
 # Check rsync exit status
 if [ $? -eq 0 ]; then
-    echo "Sync completed successfully at $(date)" | gawk '{print strftime("[%Y-%m-%d %H:%M:%S]"), $0}' >> "$LOGFILE"
+    terminal-notifier -title "Syncer" -message "Sync completed without errors." -sound default -appIcon "/System/Library/CoreServices/CoreTypes.bundle/Contents/Resources/Checkmark.icns"
 else
-    echo "Sync encountered errors at $(date)" | gawk '{print strftime("[%Y-%m-%d %H:%M:%S]"), $0}' >> "$LOGFILE"
+    terminal-notifier -title "Syncer" -message "Sync encountered errors. Check the log for details." -sound default -appIcon "/System/Library/CoreServices/CoreTypes.bundle/Contents/Resources/AlertStopIcon.icns"
 fi
 
 # Log the end time
