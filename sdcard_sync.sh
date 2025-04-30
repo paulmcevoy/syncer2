@@ -1,22 +1,20 @@
 #!/bin/bash
 # Set your source and destination
-SOURCE="/Volumes/elements/other/"
-DEST="/Volumes/SD256/MUSIC/other"
-LOGFILE="$(dirname "$0")/sync.log"
-
-#!/bin/bash
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+# source "$SCRIPT_DIR/.env" # Systemd now handles loading this via EnvironmentFile
+LOGFILE="$SCRIPT_DIR/sync.log"
+# Simplified logging function (no gawk timestamp)
+log() {
+    echo "$*" >> "$LOGFILE"
+}
 
 # Update PATH to include gawk
 export PATH="/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin"
 
-# Your script logic here
-
-env > ~/launchd-env.log
-
 # Ensure required environment variables are set
 if [ -z "$SOURCE" ] || [ -z "$DEST" ] || [ -z "$LOGFILE" ]; then
-    echo "Error: SOURCE, DEST, and LOGFILE environment variables must be set." | gawk '{print strftime("[%Y-%m-%d %H:%M:%S]"), $0}' >> "$LOGFILE"
-    echo "Example usage: SOURCE=/path/to/source DEST=/path/to/dest LOGFILE=/path/to/log ./sdcard_sync.sh" | gawk '{print strftime("[%Y-%m-%d %H:%M:%S]"), $0}' >> "$LOGFILE"
+    log "Error: SOURCE, DEST, and LOGFILE environment variables must be set."
+    log "Example usage: SOURCE=/path/to/source DEST=/path/to/dest LOGFILE=/path/to/log ./sdcard_sync.sh"
     exit 1
 fi
 
@@ -24,43 +22,48 @@ fi
 OS=$(uname)
 
 # Add a separation header for each run
-{
-    echo "========================================="
-    echo "Script run started at $(date)"
-    echo "========================================="
-} | gawk '{print strftime("[%Y-%m-%d %H:%M:%S]"), $0}' >> "$LOGFILE"
+log ""
+log ""
+log ""
+log "========================================="
+log "Script run started at $(date)"
+log "========================================="
 
 # Log the start time
-echo "Sync started at $(date)" | gawk '{print strftime("[%Y-%m-%d %H:%M:%S]"), $0}' >> "$LOGFILE"
-terminal-notifier -title "Syncer" -message "Sync started!" -sound default
+log "Sync started at $(date)"
 
 # Cleanup function to delete .DS_Store and ._ files
 cleanup_files() {
     local DIR=$1
-    echo "Cleaning up .DS_Store and ._ files in $DIR" | gawk '{print strftime("[%Y-%m-%d %H:%M:%S]"), $0}' >> "$LOGFILE"
-    find "$DIR" -name ".DS_Store" -delete -print | gawk '{print strftime("[%Y-%m-%d %H:%M:%S]"), $0}' >> "$LOGFILE" 2>&1
-    find "$DIR" -name "._*" -delete -print | gawk '{print strftime("[%Y-%m-%d %H:%M:%S]"), $0}' >> "$LOGFILE" 2>&1
+    log "Cleaning up .DS_Store and ._ files in $DIR"
+    find "$DIR" -name ".DS_Store" -delete -print | while read line; do log "$line"; done 2>&1
+    find "$DIR" -name "._*" -delete -print | while read line; do log "$line"; done 2>&1
 }
 
 # Check if the destination is mounted
 if [ "$OS" == "Darwin" ]; then
     # macOS: Check if the destination directory exists
     if [ -d "$DEST" ]; then
-        echo "Destination directory exists: $DEST" | gawk '{print strftime("[%Y-%m-%d %H:%M:%S]"), $0}' >> "$LOGFILE"
+        log "Destination directory exists: $DEST"
     else
-        echo "Error: Destination directory $DEST does not exist or is not mounted." | gawk '{print strftime("[%Y-%m-%d %H:%M:%S]"), $0}' >> "$LOGFILE"
+        log "Error: Destination directory $DEST does not exist or is not mounted."
         exit 1
     fi
 elif [ "$OS" == "Linux" ]; then
-    # Linux: Check if the destination is mounted
-    if grep -qs "$DEST" /proc/mounts; then
-        echo "Destination directory exists and is mounted: $DEST" | gawk '{print strftime("[%Y-%m-%d %H:%M:%S]"), $0}' >> "$LOGFILE"
-    else
-        echo "Error: Destination directory $DEST does not exist or is not mounted." | gawk '{print strftime("[%Y-%m-%d %H:%M:%S]"), $0}' >> "$LOGFILE"
-        exit 1
-    fi
+    MAX_WAIT=10
+    WAITED=0
+    while ! grep -qs "[[:space:]]$MOUNT[[:space:]]" /proc/mounts; do
+        if [ $WAITED -ge $MAX_WAIT ]; then
+            log "Error: Destination directory $MOUNT did not mount after waiting."
+            exit 1
+        fi
+        log "Waiting for $MOUNT to be mounted..."
+        sleep 1
+        WAITED=$((WAITED+1))
+    done
+    log "Destination directory exists and is mounted: $MOUNT"
 else
-    echo "Unsupported operating system: $OS" | gawk '{print strftime("[%Y-%m-%d %H:%M:%S]"), $0}' >> "$LOGFILE"
+    log "Unsupported operating system: $OS"
     exit 1
 fi
 
@@ -77,17 +80,6 @@ rsync_output=$(rsync -av --itemize-changes --delete --no-perms --no-owner --no-g
 files_transferred=$(echo "$rsync_output" | grep -c '^>f')
 files_deleted=$(echo "$rsync_output" | grep -c '^*deleting')
 rsync_errors=$(echo "$rsync_output" | grep -i -c 'rsync error')
-
-# Choose icons for each status
-icon_success="/System/Library/CoreServices/CoreTypes.bundle/Contents/Resources/ToolbarInfo.icns"
-icon_info="/System/Library/CoreServices/CoreTypes.bundle/Contents/Resources/ToolbarInfo.icns"
-icon_error="/System/Library/CoreServices/CoreTypes.bundle/Contents/Resources/AlertStopIcon.icns"
-icon_delete="/System/Library/CoreServices/CoreTypes.bundle/Contents/Resources/TrashIcon.icns"
-icon_sync="/System/Library/CoreServices/CoreTypes.bundle/Contents/Resources/GenericNetworkIcon.icns"
-
-# Set your Telegram bot token and chat ID
-TELEGRAM_BOT_TOKEN='7975126386:AAG-N0IAoNf0TsBEfd4cR2mpa9NtqqLIiUY'
-TELEGRAM_CHAT_ID='7666167008'
 
 send_telegram() {
     local message="$1"
@@ -111,22 +103,12 @@ else
 fi
 
 # Log rsync output
-echo "$rsync_output" | gawk '{print strftime("[%Y-%m-%d %H:%M:%S]"), $0}' >> "$LOGFILE"
-
-# Check rsync exit status
-if [ $? -eq 0 ]; then
-    terminal-notifier -title "Syncer" -message "Sync completed without errors." -sound default -appIcon "/System/Library/CoreServices/CoreTypes.bundle/Contents/Resources/Checkmark.icns"
-else
-    terminal-notifier -title "Syncer" -message "Sync encountered errors. Check the log for details." -sound default -appIcon "/System/Library/CoreServices/CoreTypes.bundle/Contents/Resources/AlertStopIcon.icns"
-fi
+echo "$rsync_output" | while read line; do log "$line"; done
 
 # Log the end time
-echo "Sync ended at $(date)" | gawk '{print strftime("[%Y-%m-%d %H:%M:%S]"), $0}' >> "$LOGFILE"
+log "Sync ended at $(date)"
 
 # Add a separation footer for each run
-{
-    echo "========================================="
-    echo "Script run ended at $(date)"
-    echo "========================================="
-} | gawk '{print strftime("[%Y-%m-%d %H:%M:%S]"), $0}' >> "$LOGFILE"
-
+log "========================================="
+log "Script run ended at $(date)"
+log "========================================="
