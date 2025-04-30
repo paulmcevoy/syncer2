@@ -7,9 +7,33 @@ LOGFILE="$SCRIPT_DIR/sync.log"
 log() {
     echo "$*" >> "$LOGFILE"
 }
-
+echo "Logging to $LOGFILE"
 # Update PATH to include gawk
 export PATH="/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin"
+
+# Detect the operating system
+OS=$(uname)
+
+
+# Load .env file only on macOS
+if [ "$OS" == "Darwin" ]; then
+
+    ENV_FILE="$SCRIPT_DIR/.env"
+    echo "macOS detected. Loading environment variables from $ENV_FILE"
+
+    if [ -f "$ENV_FILE" ]; then
+        log "macOS detected. Loading environment variables from $ENV_FILE"
+        # Use 'set -a' to export all variables sourced from the file
+        set -a
+        source "$ENV_FILE"
+        set +a
+    else
+        log "macOS detected, but $ENV_FILE not found. Relying on existing environment variables."
+    fi
+elif [ "$OS" == "Linux" ]; then
+    log "Linux detected. Assuming environment variables are provided by the system (e.g., Systemd)."
+fi
+
 
 # Ensure required environment variables are set
 if [ -z "$SOURCE" ] || [ -z "$DEST" ] || [ -z "$LOGFILE" ]; then
@@ -18,8 +42,7 @@ if [ -z "$SOURCE" ] || [ -z "$DEST" ] || [ -z "$LOGFILE" ]; then
     exit 1
 fi
 
-# Detect the operating system
-OS=$(uname)
+
 
 # Add a separation header for each run
 log ""
