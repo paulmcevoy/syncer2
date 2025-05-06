@@ -94,6 +94,36 @@ fi
 cleanup_files "$SOURCE"
 cleanup_files "$DEST"
 
+send_telegram() {
+    local message="$1"
+    curl -s -X POST "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" \
+        -d chat_id="${TELEGRAM_CHAT_ID}" \
+        -d text="${message}" \
+        -d parse_mode="Markdown"
+}
+
+# Show the rsync command that will be run
+log "Running rsync command to check diffs..."
+
+# Capture the dry-run output
+dry_run_output=$(rsync -avn --itemize-changes --delete --no-perms --no-owner --no-group --chmod=a=rwx \
+    --exclude="*Lucife*" \
+    "$SOURCE/" "$DEST/" 2>&1)
+
+# Log the captured dry-run output
+echo "$dry_run_output" | while read line; do log "$line"; done
+# Count the number of files transferred, deleted, and errors
+files_transferred=$(echo "$dry_run_output" | grep -c '^>f')
+files_deleted=$(echo "$dry_run_output" | grep -c '^*deleting')
+rsync_errors=$(echo "$dry_run_output" | grep -i -c 'rsync error')
+
+# Notify based on the result
+if [ $rsync_errors -gt 0 ]; then
+    send_telegram "❌ *Syncer*: Sync encountered errors. Check the log for details."
+else
+    send_telegram "🔄 *Syncer*: Sync work: $files_transferred files to transfer, $files_deleted to delete."
+fi
+
 # Start rsync
 rsync_output=$(rsync -av --itemize-changes --delete --no-perms --no-owner --no-group --chmod=a=rwx \
     --exclude="*Lucife*" \
@@ -104,13 +134,6 @@ files_transferred=$(echo "$rsync_output" | grep -c '^>f')
 files_deleted=$(echo "$rsync_output" | grep -c '^*deleting')
 rsync_errors=$(echo "$rsync_output" | grep -i -c 'rsync error')
 
-send_telegram() {
-    local message="$1"
-    curl -s -X POST "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" \
-        -d chat_id="${TELEGRAM_CHAT_ID}" \
-        -d text="${message}" \
-        -d parse_mode="Markdown"
-}
 
 # Notify based on the result
 if [ $rsync_errors -gt 0 ]; then
